@@ -115,3 +115,234 @@ export class PostsController {
 - Set -> array
 - Nested arrays, objects, and Resources are recursively mapped
 - Swagger @ApiProperty metadata on Resource fields is honored, including nested Resource types
+
+## Advanced mapping examples
+
+### 1) Auto-expanding nested Resources from entity data
+
+When a Resource field is typed as another Resource (optionally via Swagger's `type`), the mapper will automatically construct that nested Resource from the original entity value. Arrays are supported too.
+
+Example:
+
+```ts
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Resource } from '@sapientpro/nestjs-http';
+
+// Suppose these resources exist
+class ProfileResource extends Resource<any> {}
+class MembershipResource extends Resource<any> {}
+class PhoneNumberResource extends Resource<any> {}
+
+type AccountEntity = {
+  id: string;
+  name: string;
+  profile?: any; // data to feed into ProfileResource
+  memberships?: any[]; // data to feed into MembershipResource[]
+  phoneNumbers?: any[]; // data to feed into PhoneNumberResource[]
+};
+
+export class AccountSummaryResource extends Resource<AccountEntity> {
+  @ApiProperty()
+  id!: string;
+
+  @ApiProperty()
+  name!: string;
+
+  @ApiPropertyOptional()
+  profile?: ProfileResource; // will be auto-mapped from entity.profile
+
+  @ApiPropertyOptional({ type: MembershipResource, isArray: true })
+  memberships?: MembershipResource[]; // auto-mapped from entity.memberships
+
+  @ApiPropertyOptional({ type: PhoneNumberResource, isArray: true })
+  phoneNumbers?: PhoneNumberResource[]; // auto-mapped from entity.phoneNumbers
+}
+```
+
+Result: `profile`, `memberships`, and `phoneNumbers` will be automatically expanded from the corresponding `AccountEntity` fields and converted to the specified Resource types.
+
+
+### 2) Inheritance-aware field resolution
+
+If you extend a Resource, only the declared fields of each class are auto-resolved from the data type assigned to that class in the hierarchy.
+
+```ts
+import { ApiProperty } from '@nestjs/swagger';
+import { Resource } from '@sapientpro/nestjs-http';
+
+type DataType = { id: number; name: number };
+
+class A extends Resource<DataType> {
+  @ApiProperty()
+  id!: number; // A will map only `id` from DataType
+}
+
+class B extends A {
+  @ApiProperty()
+  name!: number; // B adds `name`, so B will map both `id` and `name`
+}
+```
+
+- An instance of `A` will include only `id`.
+- An instance of `B` will include both `id` and `name`.
+
+
+### 3) Using ResourceMap for custom mapping (with DI)
+
+You can override or enrich the auto-resolved properties using `@ResourceMap`. Inject services (including forwardRef) into the mapper and return an object with fields to set explicitly. Fields returned by `map` are ignored by the auto-resolver (i.e., they won't be auto-populated again).
+
+```ts
+import { forwardRef, Injectable } from '@nestjs/common';
+import { ApiProperty } from '@nestjs/swagger';
+import { Resource, ResourceMap } from '@sapientpro/nestjs-http';
+
+class SomeService { /* ... */ }
+class Service2 { /* ... */ }
+
+type DataType = { raw: string; computed?: string };
+
+@ResourceMap<DataType>({
+  injects: [SomeService, forwardRef(() => Service2)],
+  map(value: DataType, someService: SomeService, service2: Service2) {
+    return {
+      // Any fields you return here will be set on the resource and excluded from auto-resolving
+      computed: `${value.raw}-${/* use services if needed */ 'x'}`,
+    };
+  },
+})
+export class ExampleResource extends Resource<DataType> {
+  @ApiProperty()
+  raw!: string; // will be auto-resolved unless overridden in map
+
+  @ApiProperty()
+  computed!: string; // provided by ResourceMap.map, so auto-resolve will skip it
+}
+```
+
+Notes:
+- The `map` function receives the original data and any injected services.
+- Returned fields from `map` are considered resolved and will not be auto-filled afterward.
+- Remaining declared properties on the Resource are auto-resolved from the source data (including nested Resources, arrays, Dates, Buffers, BigInt, Maps/Sets, etc.).
+
+
+## Creating new resources (cookbook)
+
+Below are small, copy–pasteable examples you can adapt when creating new Resources. These are examples only; no source files are added to the library.
+
+### A) Simple nested resources with arrays
+
+```ts
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Resource } from '@sapientpro/nestjs-http';
+
+type Profile = {
+  bio?: string;
+  website?: string;
+};
+
+type UserEntity = {
+  id: string;
+  name: string;
+  tags?: string[];
+  profile?: Profile;
+};
+
+export class ProfileResource extends Resource<Profile> {
+  @ApiPropertyOptional()
+  bio?: string;
+
+  @ApiPropertyOptional()
+  website?: string;
+}
+
+export class UserResource extends Resource<UserEntity> {
+  @ApiProperty()
+  id!: string;
+
+  @ApiProperty()
+  name!: string;
+
+  @ApiPropertyOptional({ isArray: true, type: String })
+  tags?: string[];
+
+  @ApiPropertyOptional({ type: ProfileResource })
+  profile?: ProfileResource; // auto-expanded from entity.profile
+}
+```
+
+- Arrays of primitives work with `type: String | Number | Boolean`.
+- Single nested resource is auto-instantiated because the field type is `ProfileResource`.
+
+### B) Handling Date, Buffer, BigInt and arrays of nested resources
+
+```ts
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Resource } from '@sapientpro/nestjs-http';
+
+// Domain types
+export type OrderItem = { sku: string; quantity: number };
+export type Order = {
+  id: bigint;        // will be serialized as string
+  createdAt: Date;   // will be serialized as ISO string
+  invoicePdf?: Buffer; // will be base64 string if present
+  items: OrderItem[];
+};
+
+export class OrderItemResource extends Resource<OrderItem> {
+  @ApiProperty()
+  sku!: string;
+
+  @ApiProperty()
+  quantity!: number;
+}
+
+export class OrderResource extends Resource<Order> {
+  @ApiProperty()
+  id!: string; // BigInt -> string
+
+  @ApiProperty()
+  createdAt!: string; // Date -> ISO string
+
+  @ApiPropertyOptional()
+  invoicePdf?: string; // Buffer -> base64
+
+  @ApiProperty({ type: OrderItemResource, isArray: true })
+  items!: OrderItemResource[]; // auto-expanded
+}
+```
+
+- You can still declare `id` as `bigint` and `createdAt` as `Date` in the resource; the interceptor will serialize them. Typing as `string` in the Resource reflects the final JSON.
+
+### C) Renaming fields and computing values with ResourceMap
+
+```ts
+import { ApiProperty } from '@nestjs/swagger';
+import { Resource, ResourceMap } from '@sapientpro/nestjs-http';
+
+type Product = {
+  id: number;
+  title: string;           // we want to expose as `name`
+  priceCents: number;      // we want to expose as `price` in dollars
+};
+
+@ResourceMap<Product>({
+  map(value) {
+    return {
+      name: value.title,                // rename
+      price: value.priceCents / 100,    // compute
+    };
+  },
+})
+export class ProductResource extends Resource<Product> {
+  @ApiProperty()
+  id!: number; // auto-resolved
+
+  @ApiProperty()
+  name!: string; // provided by map, excluded from auto-resolve
+
+  @ApiProperty()
+  price!: number; // provided by map
+}
+```
+
+Tip: Any fields returned by `map` are considered resolved and won’t be auto-populated again.
