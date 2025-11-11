@@ -57,12 +57,11 @@ export class ResourcesService {
           }
         }
 
-        await Promise.all((
+        await Promise.all(
           this.getProps(value.constructor as Type)
-        ).map(async (prop) => {
-          const name = prop.slice(1);
-          (<Record<string, unknown>>value)[name] = await this.map((<Record<string, unknown>>value)[name]);
-        }));
+            .map(async (name) => {
+              (<Record<string, unknown>>value)[name] = await this.map((<Record<string, unknown>>value)[name]);
+            }));
       }
     }
 
@@ -70,8 +69,9 @@ export class ResourcesService {
   }
 
   private _props = new Map<Type, Array<string>>;
+
   private getProps(metatype: Type): readonly string[] {
-    if(!this._props.has(metatype)) {
+    if (!this._props.has(metatype)) {
       const props = new Set(
         ((Reflect.getMetadata('swagger/apiModelPropertiesArray', metatype.prototype) ?? []) as Array<string>).map(
           (prop: string) => prop.slice(1),
@@ -108,7 +108,8 @@ export class ResourcesService {
               { strict: false },
             ),
           ) ?? [];
-        await Promise.all(Object.entries(await map(data, ...injectValues)).map(async([key, propValue]) => {
+
+        await Promise.all(Object.entries(await map(data, ...injectValues)).map(async ([key, propValue]) => {
           value[key] = await this.map(propValue);
           props.delete(key);
         }));
