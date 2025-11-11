@@ -206,7 +206,7 @@ type DataType = { raw: string; computed?: string };
   map(value: DataType, someService: SomeService, service2: Service2) {
     return {
       // Any fields you return here will be set on the resource and excluded from auto-resolving
-      computed: `${value.raw}-${/* use services if needed */ 'x'}`,
+      computed: `${value.raw}-${someService.get('x')}`,
     };
   },
 })

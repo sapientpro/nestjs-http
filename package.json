@@ -1,6 +1,6 @@
 {
   "name": "@sapientpro/nestjs-http",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "NestJS HTTP utilities: Resource mapping, automatic response serialization via interceptor, Swagger helpers, and paginated query/response types.",
   "license": "MIT",
   "readmeFilename": "README.md",
@@ -61,6 +61,8 @@
     "tslib": "^2.5.0"
   },
   "files": [
-    "dist"
+    "dist",
+    "src",
+    "tsconfig.json"
   ]
 }

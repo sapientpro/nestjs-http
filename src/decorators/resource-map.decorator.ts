@@ -7,7 +7,7 @@ type ResourceValue<C extends Ctor<Resource<any>>> = C extends Ctor<Resource<infe
 
 export type ResourceMapOptions<R> = {
   injects?: Array<InjectionToken | ForwardReference>;
-  map: (value: R, ...args: any[]) => Record<string, any>;
+  map: (value: R, ...args: any[]) => Record<string, any> | Promise<Record<string, any>>;
 };
 
 const ResourceMapDecorator = Reflector.createDecorator<ResourceMapOptions<any>>();

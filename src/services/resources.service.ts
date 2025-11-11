@@ -11,7 +11,7 @@ export class ResourcesService {
   @Inject() private reflector!: Reflector;
   @Inject() private readonly moduleRef!: ModuleRef;
 
-  private readonly mappers = new Map<AbstractType, (value: any, map: (value: unknown) => unknown) => unknown>();
+  private readonly mappers = new Map<AbstractType, (value: any, map: (value: unknown) => Promise<unknown>) => unknown>();
 
   constructor() {
     this.addMapper(Resource, (value) =>
@@ -23,20 +23,20 @@ export class ResourcesService {
     )
       .addMapper(Date, (value) => value.toISOString())
       .addMapper(Buffer, (value) => value.toString('base64'))
-      .addMapper(Map, (value, map) =>
-        Object.fromEntries(Array.from(value.entries()).map(([key, value]) => [key, map(value)])),
+      .addMapper(Map, async (value, map) =>
+        Object.fromEntries(await Promise.all(Array.from(value.entries()).map(async ([key, value]) => [key, await map(value)]))),
       )
-      .addMapper(Set, (value, map) => Array.from(value.values()).map((value) => map(value)));
+      .addMapper(Set, (value, map) => Promise.all(Array.from(value.values()).map(map)));
   }
 
-  addMapper<T>(type: AbstractType<T>, resolver: (value: T, map: (value: unknown) => unknown) => unknown) {
+  addMapper<T>(type: AbstractType<T>, resolver: (value: T, map: (value: unknown) => Promise<unknown>) => Promise<unknown> | unknown) {
     this.mappers.set(type, resolver);
     return this;
   }
 
   private mappedValues = new WeakSet<object>();
 
-  map(value: unknown): unknown {
+  async map(value: unknown): Promise<unknown> {
     switch (typeof value) {
       case 'bigint':
         return value.toString();
@@ -48,37 +48,47 @@ export class ResourcesService {
         this.mappedValues.add(value);
 
         if (Array.isArray(value)) {
-          return value.map((item) => this.map(item));
+          return Promise.all(value.map((item) => this.map(item)));
         }
 
         for (const [type, mapper] of this.mappers) {
           if (value instanceof type) {
-            return this.map(mapper(value, (value: any) => this.map(value)));
+            return this.map(await mapper(value, (value: any) => this.map(value)));
           }
         }
 
-        (
-          (Reflect.getMetadata('swagger/apiModelPropertiesArray', value.constructor.prototype) ?? []) as Array<string>
-        ).forEach((prop) => {
+        await Promise.all((
+          this.getProps(value.constructor as Type)
+        ).map(async (prop) => {
           const name = prop.slice(1);
-          (<Record<string, unknown>>value)[name] = this.map((<Record<string, unknown>>value)[name]);
-        });
+          (<Record<string, unknown>>value)[name] = await this.map((<Record<string, unknown>>value)[name]);
+        }));
       }
     }
 
     return value;
   }
 
-  mapResource(
+  private _props = new Map<Type, Array<string>>;
+  private getProps(metatype: Type): readonly string[] {
+    if(!this._props.has(metatype)) {
+      const props = new Set(
+        ((Reflect.getMetadata('swagger/apiModelPropertiesArray', metatype.prototype) ?? []) as Array<string>).map(
+          (prop: string) => prop.slice(1),
+        ),
+      );
+      this._props.set(metatype, Array.from(props));
+    }
+
+    return this._props.get(metatype)!;
+  }
+
+  async mapResource(
     metatype: Type<Resource<unknown>>,
     value: Resource<any> & Record<string, unknown>,
     data: Record<string, unknown>,
   ) {
-    const props = new Set(
-      ((Reflect.getMetadata('swagger/apiModelPropertiesArray', metatype.prototype) ?? []) as Array<string>).map(
-        (prop: string) => prop.slice(1),
-      ),
-    );
+    const props = new Set(this.getProps(metatype));
 
     let prototype = metatype;
     const targets: Array<Type<Resource<unknown>>> = [];
@@ -87,8 +97,8 @@ export class ResourcesService {
       prototype = <Type<Resource<any>>>Object.getPrototypeOf(prototype);
     } while (prototype.prototype !== Resource.prototype);
 
-    new Set(this.reflector.getAll(ResourceMap.Decorator, targets).filter(Boolean).reverse()).forEach(
-      ({ map, injects }) => {
+    await Promise.all(Array.from(new Set(this.reflector.getAll(ResourceMap.Decorator, targets).filter(Boolean).reverse())).map(
+      async ({ map, injects }) => {
         const injectValues: unknown[] =
           injects?.map((provider) =>
             this.moduleRef.get(
@@ -98,14 +108,14 @@ export class ResourcesService {
               { strict: false },
             ),
           ) ?? [];
-        Object.entries(map(data, ...injectValues)).forEach(([key, propValue]) => {
-          value[key] = this.map(propValue);
+        await Promise.all(Object.entries(await map(data, ...injectValues)).map(async([key, propValue]) => {
+          value[key] = await this.map(propValue);
           props.delete(key);
-        });
+        }));
       },
-    );
+    ));
 
-    props.forEach((name) => {
+    await Promise.all(Array.from(props).map(async (name) => {
       let propValue = data[name];
 
       if ((propValue ?? null) !== null) {
@@ -127,8 +137,8 @@ export class ResourcesService {
         }
       }
 
-      value[name] = this.map(propValue);
-    });
+      value[name] = await this.map(propValue);
+    }));
 
     return value;
   }
