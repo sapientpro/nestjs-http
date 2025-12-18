@@ -123,9 +123,9 @@ export class ResourcesService {
         const existingMetadata = <ApiPropertyOptions | undefined>(
           Reflect.getMetadata('swagger/apiModelProperties', metatype.prototype, name)
         );
-        if (existingMetadata?.type instanceof Function && existingMetadata.type.prototype instanceof Resource) {
-          const type = existingMetadata.type as Type<Resource<any>>;
-          if (existingMetadata.isArray) {
+        const type: any = typeof existingMetadata?.type === 'function' && (existingMetadata.type.prototype ? existingMetadata.type : existingMetadata.type.call(null));
+        if (type instanceof Function && type.prototype instanceof Resource) {
+          if (existingMetadata!.isArray) {
             propValue = [].map.call(propValue, (item: any) => new type(item));
           } else {
             propValue = new type(propValue);
