@@ -1,6 +1,6 @@
 {
   "name": "@sapientpro/nestjs-http",
-  "version": "0.0.4",
+  "version": "0.0.5",
   "description": "NestJS HTTP utilities: Resource mapping, automatic response serialization via interceptor, Swagger helpers, and paginated query/response types.",
   "license": "MIT",
   "readmeFilename": "README.md",
