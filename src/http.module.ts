@@ -11,5 +11,6 @@ import { ResourcesService } from './services';
       useClass: ResourceInterceptor,
     },
   ],
+  exports: [ResourcesService],
 })
 export class HttpModule {}
