@@ -45,7 +45,8 @@
   "scripts": {
     "prepare": "npm run compile",
     "compile": "rimraf ./dist && tsc",
-    "watch": "tsc -w"
+    "watch": "tsc -w",
+    "test": "npm run compile && node --test test/"
   },
   "devDependencies": {
     "@types/node": "^20.13.0",

@@ -1,11 +1,13 @@
 import { ForwardReference, Inject, InjectionToken, Type } from '@nestjs/common';
 import { ModuleRef, Reflector } from '@nestjs/core';
 import { ApiPropertyOptions } from '@nestjs/swagger';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { ResourceMap } from '../decorators';
 import { Resource } from '../resources';
 import { dataSymbol } from '../resources/consts';
 
 type AbstractType<T = any> = abstract new (...args: any[]) => T;
+type Path = { value: object; parent?: Path };
 
 export class ResourcesService {
   @Inject() private reflector!: Reflector;
@@ -34,7 +36,11 @@ export class ResourcesService {
     return this;
   }
 
+  /** Objects mapped in place: seen again, they are already what they should be. */
   private mappedValues = new WeakSet<object>();
+
+  /** The objects being converted right now, innermost first, for whatever runs inside them. */
+  private readonly path = new AsyncLocalStorage<Path>();
 
   async map(value: unknown): Promise<unknown> {
     switch (typeof value) {
@@ -45,25 +51,44 @@ export class ResourcesService {
         if (this.mappedValues.has(value)) {
           return value;
         }
-        this.mappedValues.add(value);
-
-        if (Array.isArray(value)) {
-          return Promise.all(value.map((item) => this.map(item)));
+        const path = this.path.getStore();
+        for (let step = path; step; step = step.parent) {
+          if (step.value === value) return value;
         }
-
-        for (const [type, mapper] of this.mappers) {
-          if (value instanceof type) {
-            return this.map(await mapper(value, (value: any) => this.map(value)));
-          }
-        }
-
-        await Promise.all(
-          this.getProps(value.constructor as Type)
-            .map(async (name) => {
-              (<Record<string, unknown>>value)[name] = await this.map((<Record<string, unknown>>value)[name]);
-            }));
+        return this.path.run({ value, parent: path }, () => this.convert(value));
       }
     }
+
+    return value;
+  }
+
+  /**
+   * An array or a value with a mapper is converted wherever it turns up, so two rows sharing one
+   * both get the result; only meeting itself inside its own conversion ends the walk (see `map`).
+   */
+  private async convert(value: object): Promise<unknown> {
+    if (Array.isArray(value)) {
+      return Promise.all(value.map((item) => this.map(item)));
+    }
+
+    // A resource is filled in where it stands, once, however many rows hold it.
+    if (value instanceof Resource) this.mappedValues.add(value);
+
+    for (const [type, mapper] of this.mappers) {
+      if (value instanceof type) {
+        const mapped = await mapper(value, (value: any) => this.map(value));
+        if (mapped !== value) return this.map(mapped);
+        this.mappedValues.add(value);
+        return value;
+      }
+    }
+
+    this.mappedValues.add(value);
+    await Promise.all(
+      this.getProps(value.constructor as Type)
+        .map(async (name) => {
+          (<Record<string, unknown>>value)[name] = await this.map((<Record<string, unknown>>value)[name]);
+        }));
 
     return value;
   }
